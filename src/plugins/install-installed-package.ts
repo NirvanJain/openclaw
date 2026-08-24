@@ -57,7 +57,7 @@ export async function validatePackagePluginInstallSource(params: {
   logger: PluginInstallLogger;
   mode: "install" | "update";
   resolveEffectiveMode?: (pluginId: string) => Promise<"install" | "update">;
-}): Promise<
+}): Promise
   | {
       ok: true;
       plugin: ValidatedPackagePlugin;
@@ -78,7 +78,15 @@ export async function validatePackagePluginInstallSource(params: {
   const pkgName = normalizeOptionalString(manifest.name) ?? "";
   const npmPluginId = pkgName || "plugin";
   const ocManifestResult = params.runtime.loadPluginManifest(params.packageDir);
-  if (!ocManifestResult.ok && params.requirePluginManifest) {
+  // A missing/invalid manifest is always reported as a manifest error, not a
+  // downstream "plugin id mismatch". This matters most for expectedPluginId
+  // installs (bundled or catalog-trusted npm specs): without this check, a
+  // package resolved from a bad npm dist-tag (e.g. `latest` pointing at an
+  // empty 0.0.0 stub) falls through to comparing the npm package name
+  // against the expected manifest id, producing a confusing
+  // "plugin id mismatch: expected <id>, got <npm-package-name>" error that
+  // hides the real problem: the package has no openclaw.plugin.json at all.
+  if (!ocManifestResult.ok && (params.requirePluginManifest || params.expectedPluginId)) {
     return {
       ok: false,
       error: `package missing valid openclaw.plugin.json: ${ocManifestResult.error}`,
