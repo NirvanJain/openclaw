@@ -3704,19 +3704,36 @@ describe("installPluginFromDir", () => {
     expectWarningExcludes(infoMessages, "differs from npm package name");
   });
 
+    it("reports a missing manifest instead of a misleading id mismatch for expectedPluginId installs", async () => {
+    // Regression test for a bad npm `latest` dist-tag resolving to a stub
+    // release with no openclaw.plugin.json (e.g. a 0.0.0 placeholder while
+    // the real plugin sits under a different version/tag). Previously this
+    // surfaced as "plugin id mismatch: expected comfy, got
+    // @openclaw/comfy-provider", which points at the wrong root cause.
+    const caseDir = suiteTempRootTracker.makeTempDir();
+    const pluginDir = path.join(caseDir, "stub-plugin");
+    fs.mkdirSync(pluginDir, { recursive: true });
+    writeMinimalPackagePlugin(pluginDir, "@openclaw/comfy-provider");
+    const extensionsDir = path.join(caseDir, "extensions");
+
+    const result = await installPluginFromInstalledPackageDir({
+      packageDir: pluginDir,
+      extensionsDir,
+      expectedPluginId: "comfy",
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("package missing valid openclaw.plugin.json");
+      expect(result.error).not.toContain("plugin id mismatch");
+      expect(result.code).toBe(PLUGIN_INSTALL_ERROR_CODE.MISSING_PLUGIN_MANIFEST);
+    }
+  });
+
   it.each([
     {
       name: "manifest id wins for scoped plugin ids",
-      setup: () => setupManifestInstallFixture({ manifestId: "@team/memory-cognee" }),
-      expectedPluginId: "@team/memory-cognee",
-      install: (pluginDir: string, extensionsDir: string) =>
-        installPluginFromDir({
-          dirPath: pluginDir,
-          extensionsDir,
-          expectedPluginId: "@team/memory-cognee",
-          logger: { info: () => {}, warn: () => {} },
-        }),
-    },
+      ...
     {
       name: "package name keeps scoped plugin id by default",
       setup: () => setupInstallPluginFromDirFixture(),
