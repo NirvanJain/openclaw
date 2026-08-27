@@ -375,9 +375,6 @@ async function markActiveRunsForRestartRecovery(
   }
   await settleTerminalSessionPersistenceForRestart(params.chatAbortControllers);
   const refs = collectActiveRestartSessionRefs(params);
-  if (refs.sessionKeys.size === 0 && refs.sessionIds.size === 0) {
-    return;
-  }
   try {
     const markerTimeout = createTimeoutRace(
       RESTART_MARKER_SLOW_WARNING_MS,
@@ -521,14 +518,6 @@ async function drainRestartPendingRepliesForShutdown(
   const abortedQueuedTurns = abortQueuedTurnsForRestart(params);
   if (abortedQueuedTurns > 0) {
     shutdownLog.warn(`aborted ${abortedQueuedTurns} queued turn(s) during restart shutdown`);
-  }
-
-  if (
-    drainResult.counts.activeRuns <= 0 &&
-    (params.restartRecoveryCandidates?.size ?? 0) === 0 &&
-    listRestartRecoveryRuns(params.chatAbortControllers).length === 0
-  ) {
-    return;
   }
 
   await markActiveRunsForRestartRecovery({
@@ -969,16 +958,18 @@ export function createGatewayCloseHandler(
         clearInterval(timer);
       }
       params.nodePresenceTimers.clear();
+      // Omit rather than null: ShutdownEventSchema declares an optional integer,
+      // and clients key the restart presentation on the field's presence.
       params.broadcast("shutdown", {
         reason,
-        restartExpectedMs,
+        ...(restartExpectedMs === null ? {} : { restartExpectedMs }),
       });
       if (params.maintenance) {
         clearInterval(params.maintenance.tickInterval);
         clearInterval(params.maintenance.healthInterval);
         clearInterval(params.maintenance.dedupeCleanup);
         clearInterval(params.maintenance.worktreeCleanup);
-        params.maintenance.skillCuratorCleanup();
+        params.maintenance.skillUsageCleanup();
       }
       if (params.agentUnsub) {
         await shutdownStep("agent-unsub", () => params.agentUnsub!(), warnings);
