@@ -723,13 +723,27 @@ export async function runPreflightCompactionIfNeeded(params: {
   runtimePolicySessionKey?: string;
   storePath?: string;
   isHeartbeat: boolean;
-  replyOperation: ReplyOperation;
+  /**
+   * Owning ReplyOperation for the auto-reply lane. Optional so direct command
+   * finalizers (no ReplyOperation) can still drive this same usage-based
+   * maintenance owner via `abortSignal`/`onSessionIdChanged` below.
+   */
+  replyOperation?: ReplyOperation;
+  /** Used when no `replyOperation` is supplied (e.g. direct command runs). */
+  abortSignal?: AbortSignal;
+  /** Used when no `replyOperation` is supplied (e.g. direct command runs). */
+  onSessionIdChanged?: (sessionId: string) => void;
   onCompactionNotice?: (phase: CompactionNoticePhase, text?: string) => Promise<void> | void;
 }): Promise<SessionEntry | undefined> {
   const deps = {
     compactEmbeddedAgentSession: memoryDeps.compactEmbeddedAgentSession,
     incrementCompactionCount: memoryDeps.incrementCompactionCount,
     refreshQueuedFollowupSession: memoryDeps.refreshQueuedFollowupSession,
+  };
+  const abortSignal = params.replyOperation?.abortSignal ?? params.abortSignal;
+  const updateSessionId = (sessionId: string) => {
+    params.replyOperation?.updateSessionId(sessionId);
+    params.onSessionIdChanged?.(sessionId);
   };
   if (!params.sessionKey) {
     return params.sessionEntry;
@@ -921,7 +935,7 @@ export async function runPreflightCompactionIfNeeded(params: {
       `maxActiveTranscriptBytes=${maxActiveTranscriptBytes ?? "undefined"}`,
   );
 
-  params.replyOperation.setPhase("preflight_compacting");
+  params.replyOperation?.setPhase("preflight_compacting");
   const notifyCompaction = async (phase: CompactionNoticePhase, text?: string) => {
     try {
       if (text) {
@@ -999,7 +1013,7 @@ export async function runPreflightCompactionIfNeeded(params: {
       contextTokenBudget: contextWindowTokens,
       currentTokenCount: tokenCountForCompaction ?? freshPersistedTokens,
       ownerNumbers: params.followupRun.run.ownerNumbers,
-      abortSignal: params.replyOperation.abortSignal,
+      abortSignal,
     });
 
     if (!result?.ok) {
@@ -1052,7 +1066,7 @@ export async function runPreflightCompactionIfNeeded(params: {
     if (entry) {
       const previousSessionId = params.followupRun.run.sessionId;
       params.followupRun.run.sessionId = entry.sessionId;
-      params.replyOperation.updateSessionId(entry.sessionId);
+      updateSessionId(entry.sessionId);
       const queueKey = params.followupRun.run.sessionKey ?? params.sessionKey;
       if (queueKey) {
         params.followupRun.run.sessionFile = queueKey;
