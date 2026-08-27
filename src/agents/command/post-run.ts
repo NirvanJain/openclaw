@@ -281,7 +281,11 @@ export async function finalizeEmbeddedAgentCommand(params: {
       };
       throwAgentRunRestartAbortReason(params.opts.abortSignal?.reason);
       assertAgentRunLifecycleGenerationCurrent(lifecycleGeneration);
-      const { runMemoryFlushIfNeeded } = await loadAgentRunnerMemoryRuntime();
+      const { runMemoryFlushIfNeeded, runPreflightCompactionIfNeeded } =
+        await loadAgentRunnerMemoryRuntime();
+      const isHeartbeatFinalizerRun = isHeartbeatLifecycleRunKind(
+        params.opts.bootstrapContextRunKind,
+      );
       throwAgentRunRestartAbortReason(params.opts.abortSignal?.reason);
       assertAgentRunLifecycleGenerationCurrent(lifecycleGeneration);
       const memoryFlushResult = await runMemoryFlushIfNeeded({
@@ -296,11 +300,39 @@ export async function finalizeEmbeddedAgentCommand(params: {
         sessionKey,
         runtimePolicySessionKey: sessionKey,
         storePath,
-        isHeartbeat: isHeartbeatLifecycleRunKind(params.opts.bootstrapContextRunKind),
+        isHeartbeat: isHeartbeatFinalizerRun,
         abortSignal: params.opts.abortSignal,
         onSessionIdChanged: params.opts.onSessionIdChanged,
       });
       sessionEntry = memoryFlushResult.sessionEntry ?? sessionEntry;
+      if (sessionEntry.sessionId !== runOwnedSessionId) {
+        runOwnedSessionId = sessionEntry.sessionId;
+        publishSessionOwnership();
+      }
+      throwAgentRunRestartAbortReason(params.opts.abortSignal?.reason);
+      assertAgentRunLifecycleGenerationCurrent(lifecycleGeneration);
+
+      // Direct command sessions have no ReplyOperation, so unlike normal replies
+      // they never reached the usage-based preflight maintenance owner below.
+      // Under `compaction.mode: "safeguard"` that owner is the *only* thing that
+      // proactively compacts, so without this call safeguard sessions could keep
+      // growing past the maintenance threshold indefinitely. Disabling memory
+      // flush must not disable this. See #130716.
+      const compactedSessionEntry = await runPreflightCompactionIfNeeded({
+        cfg,
+        followupRun,
+        promptForEstimate: "",
+        defaultModel: flushModel,
+        sessionEntry,
+        sessionStore,
+        sessionKey,
+        runtimePolicySessionKey: sessionKey,
+        storePath,
+        isHeartbeat: isHeartbeatFinalizerRun,
+        abortSignal: params.opts.abortSignal,
+        onSessionIdChanged: params.opts.onSessionIdChanged,
+      });
+      sessionEntry = compactedSessionEntry ?? sessionEntry;
       if (sessionEntry.sessionId !== runOwnedSessionId) {
         runOwnedSessionId = sessionEntry.sessionId;
         publishSessionOwnership();
